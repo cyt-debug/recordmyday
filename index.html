@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>我的時間記錄</title>
+<style>
+  :root{
+    --bg:#ffffff; --fg:#111111; --accent:#0066cc; --soft:#eaf3ff;
+    --good:#17833b; --danger:#b00020; --card:#ffffff;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:Arial,"Noto Sans TC",sans-serif;font-weight:700}
+  button{font:inherit;cursor:pointer}
+  .screen{min-height:100vh;display:flex;flex-direction:column;padding:18px}
+  .topbar{display:flex;justify-content:space-between;align-items:center;gap:10px}
+  .title{font-size:clamp(24px,4vw,42px)}
+  .smallBtn{font-size:18px;padding:10px 16px;border:3px solid var(--fg);border-radius:12px;background:#fff}
+  .modeBadge{font-size:18px;padding:9px 14px;border-radius:12px;background:var(--soft);border:2px solid var(--accent)}
+  .main{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:22px}
+  .prompt{font-size:clamp(25px,4.5vw,46px);line-height:1.35}
+  .time{font-size:clamp(60px,12vw,130px);line-height:1}
+  .sub{font-size:clamp(22px,3.5vw,38px)}
+  .bigTrigger{width:min(70vw,430px);min-height:140px;font-size:clamp(30px,5vw,52px);border:5px solid var(--fg);border-radius:28px;background:#fff}
+  .bigTrigger:focus,.choice:focus,.smallBtn:focus{outline:7px solid #ffbf00;outline-offset:3px}
+  .choices{width:min(100%,1000px);display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+  .choices.one{grid-template-columns:1fr;max-width:430px}
+  .choices.two{grid-template-columns:repeat(2,1fr);max-width:760px}
+  .choice{min-height:240px;border:5px solid var(--fg);border-radius:24px;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:15px}
+  .choice.selected{border-color:var(--good);background:#eafff0}
+  .pic{font-size:clamp(70px,10vw,120px);line-height:1}
+  .choiceName{font-size:clamp(24px,4vw,42px)}
+  .hint{font-size:18px;opacity:.8}
+  .hidden{display:none!important}
+  .success{font-size:clamp(25px,4.5vw,46px);line-height:1.5}
+  .recordCard{border:5px solid var(--fg);border-radius:25px;padding:22px;width:min(90vw,700px);background:#fff}
+  .recordCard .pic{font-size:90px}
+  .summaryList{width:min(100%,900px);display:flex;flex-direction:column;gap:12px}
+  .summaryRow{display:grid;grid-template-columns:180px 1fr;align-items:center;border:3px solid var(--fg);border-radius:16px;padding:10px 16px;background:#fff}
+  .summaryTime{font-size:clamp(24px,3vw,34px)}
+  .summaryAct{display:flex;align-items:center;gap:16px;font-size:clamp(25px,3.5vw,38px)}
+  .summaryAct span:first-child{font-size:55px}
+  .footer{font-size:16px;text-align:center;opacity:.75;padding-top:10px}
+  .panel{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:20px;z-index:20}
+  .modal{background:#fff;color:#111;width:min(900px,96vw);max-height:92vh;overflow:auto;border-radius:24px;border:5px solid #111;padding:24px}
+  .modal h2{font-size:34px;margin-top:0}
+  .setting{border:3px solid #222;border-radius:16px;padding:16px;margin:14px 0}
+  .setting label{display:block;font-size:22px;margin-bottom:10px}
+  select{font-size:22px;padding:8px;border:3px solid #111;border-radius:10px;background:#fff}
+  .activityChecks{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+  .activityChecks label{border:3px solid #222;border-radius:12px;padding:12px;font-size:20px}
+  .modalBtns{display:flex;gap:12px;justify-content:flex-end;flex-wrap:wrap;margin-top:20px}
+  .primary{background:#0066cc;color:#fff;border-color:#0066cc}
+  .danger{background:#fff;color:#b00020;border-color:#b00020}
+  @media(max-width:650px){
+    .screen{padding:12px}
+    .choices,.choices.two{grid-template-columns:1fr;max-width:430px}
+    .choice{min-height:170px}
+    .summaryRow{grid-template-columns:1fr}
+    .summaryAct{margin-top:4px}
+    .topbar{align-items:flex-start}
+  }
+</style>
+</head>
+<body>
+
+<div id="app"></div>
+
+<script>
+const ACTIVITIES = {
+  breakfast:{name:"食早餐", emoji:"🍞"},
+  lunch:{name:"食午餐", emoji:"🍚"},
+  dinner:{name:"食晚餐", emoji:"🍽️"},
+  sleep:{name:"瞓覺", emoji:"🛏️"}
+};
+
+let settings = {
+  mode:"record",
+  choices:3,
+  dwellSeconds:2.0,
+  enabled:["breakfast","lunch","dinner","sleep"]
+};
+
+let records = [];
+let state = "idle";
+let currentTime = null;
+let currentOptions = [];
+let dwellTimer = null;
+let voices = [];
+
+const app = document.getElementById("app");
+
+function load(){
+  try{
+    const s=localStorage.getItem("timeRecordSettings");
+    const r=localStorage.getItem("timeRecordData");
+    if(s) settings={...settings,...JSON.parse(s)};
+    if(r) records=JSON.parse(r);
+  }catch(e){}
+}
+function save(){
+  localStorage.setItem("timeRecordSettings",JSON.stringify(settings));
+  localStorage.setItem("timeRecordData",JSON.stringify(records));
+}
+load();
+
+function nowInfo(){
+  const d=new Date();
+  let h=d.getHours(), m=d.getMinutes();
+  const ampm=h<12?"am":"pm";
+  const period=h<12?"上午":"下午";
+  const hour12=h%12||12;
+  return {date:d, h, m, ampm, period, hour12,
+    display:`${String(hour12).padStart(2,"0")}:${String(m).padStart(2,"0")}${ampm}`};
+}
+function speechText(t){
+  return `而家係${t.period}${t.hour12}點${t.m}分`;
+}
+function speak(text){
+  if(!("speechSynthesis" in window)) return;
+  speechSynthesis.cancel();
+  const u=new SpeechSynthesisUtterance(text);
+  u.lang="zh-HK";
+  u.rate=0.85;
+  u.pitch=1;
+  const hk=voices.find(v=>/zh-HK|yue|Cantonese/i.test(v.lang+" "+v.name));
+  if(hk) u.voice=hk;
+  speechSynthesis.speak(u);
+}
+if("speechSynthesis" in window){
+  voices=speechSynthesis.getVoices();
+  speechSynthesis.onvoiceschanged=()=>voices=speechSynthesis.getVoices();
+}
+
+function render(){
+  if(state==="idle") renderIdle();
+  else if(state==="speaking") renderSpeaking();
+  else if(state==="choices") renderChoices();
+  else if(state==="saved") renderSaved();
+  else if(state==="summary") renderSummary();
+}
+
+function renderShell(title, badge){
+  app.innerHTML=`<div class="screen">
+    <div class="topbar">
+      <div class="title">${title}</div>
+      <div class="modeBadge">${badge}</div>
+    </div>
+    <div id="main" class="main"></div>
+    <div class="footer">空白鍵：觸發／報時　｜　成人可按「設定」及「總結」</div>
+  </div>`;
+  return document.getElementById("main");
+}
+
+function renderIdle(){
+  const main=renderShell("我的時間記錄",settings.mode==="report"?"報時模式":"記錄模式");
+  main.innerHTML=`
+    <div class="prompt">${settings.mode==="report"?"想知道而家幾點？":"準備好就按一下／注視螢幕"}</div>
+    <button id="trigger" class="bigTrigger" autofocus>開始報時</button>
+    <div class="sub">按空白鍵亦可以</div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap;justify-content:center">
+      <button id="settingsBtn" class="smallBtn">⚙ 設定</button>
+      <button id="summaryBtn" class="smallBtn">📋 總結</button>
+    </div>`;
+  document.getElementById("trigger").onclick=trigger;
+  document.getElementById("settingsBtn").onclick=openSettings;
+  document.getElementById("summaryBtn").onclick=()=>{state="summary";render();setTimeout(()=>speakSummary(),300)};
+}
+
+function trigger(){
+  if(state!=="idle") return;
+  currentTime=nowInfo();
+  state="speaking";
+  render();
+  speak(speechText(currentTime));
+  setTimeout(()=>{
+    if(state!=="speaking") return;
+    if(settings.mode==="report"){
+      setTimeout(()=>{state="idle";render()},2200);
+    }else{
+      state="choices";
+      currentOptions=makeOptions();
+      render();
+      setTimeout(()=>speak(`${speechText(currentTime)}做緊咩呀？`),250);
+    }
+  },1300);
+}
+
+function makeOptions(){
+  let pool=[...settings.enabled];
+  pool.sort(()=>Math.random()-.5);
+  return pool.slice(0,Math.min(settings.choices,pool.length));
+}
+
+function renderSpeaking(){
+  const main=renderShell("報時中…",settings.mode==="report"?"報時模式":"記錄模式");
+  main.innerHTML=`<div class="time">${currentTime.display}</div>
+    <div class="success">${speechText(currentTime)}</div>`;
+}
+
+function renderChoices(){
+  const main=renderShell("而家做緊咩？","選擇活動");
+  const n=currentOptions.length;
+  main.innerHTML=`
+    <div class="time">${currentTime.display}</div>
+    <div class="prompt">${currentTime.period}${currentTime.hour12}點${currentTime.m}分做緊咩呀？</div>
+    <div class="choices ${n===1?"one":n===2?"two":""}">
+      ${currentOptions.map(k=>`<button class="choice" data-act="${k}">
+        <div class="pic">${ACTIVITIES[k].emoji}</div>
+        <div class="choiceName">${ACTIVITIES[k].name}</div>
+      </button>`).join("")}
+    </div>
+    <div class="hint">可以點擊圖片；眼動儀可用「注視停留」選擇</div>`;
+  document.querySelectorAll(".choice").forEach(btn=>{
+    btn.onclick=()=>choose(btn.dataset.act);
+    btn.addEventListener("mouseenter",()=>startDwell(btn));
+    btn.addEventListener("mouseleave",stopDwell);
+    btn.addEventListener("focus",()=>startDwell(btn));
+    btn.addEventListener("blur",stopDwell);
+  });
+}
+
+function startDwell(btn){
+  stopDwell();
+  const ms=Math.max(500,Number(settings.dwellSeconds)*1000);
+  btn.classList.add("selected");
+  dwellTimer=setTimeout(()=>choose(btn.dataset.act),ms);
+}
+function stopDwell(){
+  if(dwellTimer){clearTimeout(dwellTimer);dwellTimer=null;}
+  document.querySelectorAll(".choice").forEach(b=>b.classList.remove("selected"));
+}
+
+function choose(act){
+  if(state!=="choices") return;
+  stopDwell();
+  const rec={time:currentTime.display, speechTime:speechText(currentTime), activity:act, timestamp:currentTime.date.toISOString()};
+  records.push(rec); save();
+  state="saved"; currentOptions=[]; render();
+  speak(`${speechText(currentTime)}，我${ACTIVITIES[act].name}`);
+  setTimeout(()=>{state="idle";render()},3000);
+}
+
+function renderSaved(){
+  const main=renderShell("已記錄","記錄模式");
+  const r=records[records.length-1];
+  main.innerHTML=`<div class="recordCard">
+    <div class="pic">${ACTIVITIES[r.activity].emoji}</div>
+    <div class="time">${r.time}</div>
+    <div class="success">${r.speechTime}，我${ACTIVITIES[r.activity].name}</div>
+  </div>`;
+}
+
+function speakSummary(){
+  if(!records.length){speak("今日暫時未有記錄");return;}
+  const texts=records.map(r=>`${r.speechTime}，我${ACTIVITIES[r.activity].name}`);
+  speak(`今日活動記錄。${texts.join("。")}`);
+}
+
+function renderSummary(){
+  const main=renderShell("今日活動總結","成人檢視");
+  if(!records.length){
+    main.innerHTML=`<div class="prompt">今日暫時未有記錄</div>
+      <button class="smallBtn" onclick="goHome()">返回</button>`;
+    return;
+  }
+  main.innerHTML=`<div class="summaryList">
+    ${records.map(r=>`<div class="summaryRow">
+      <div class="summaryTime">${r.time}</div>
+      <div class="summaryAct"><span>${ACTIVITIES[r.activity].emoji}</span><span>${ACTIVITIES[r.activity].name}</span></div>
+    </div>`).join("")}
+  </div>
+  <div style="display:flex;gap:12px;flex-wrap:wrap;justify-content:center">
+    <button class="smallBtn primary" id="readSummary">🔊 再讀一次</button>
+    <button class="smallBtn danger" id="clearRecords">清除今日記錄</button>
+    <button class="smallBtn" id="back">返回</button>
+  </div>`;
+  document.getElementById("readSummary").onclick=speakSummary;
+  document.getElementById("back").onclick=goHome;
+  document.getElementById("clearRecords").onclick=()=>{
+    if(confirm("確定清除今日所有記錄？")){records=[];save();renderSummary();}
+  };
+}
+
+function goHome(){state="idle";render();}
+
+function openSettings(){
+  const panel=document.createElement("div");
+  panel.className="panel";
+  panel.innerHTML=`<div class="modal">
+    <h2>⚙ 成人設定</h2>
+    <div class="setting">
+      <label>使用模式</label>
+      <select id="mode">
+        <option value="report">模式一：報時模式</option>
+        <option value="record">模式二：記錄模式</option>
+      </select>
+    </div>
+    <div class="setting">
+      <label>每次顯示多少個活動選項？</label>
+      <select id="choices">
+        <option value="1">1 個</option><option value="2">2 個</option><option value="3">3 個</option>
+      </select>
+    </div>
+    <div class="setting">
+      <label>眼動儀注視多久後選擇？</label>
+      <select id="dwell">
+        <option value="1">1 秒</option><option value="1.5">1.5 秒</option>
+        <option value="2">2 秒</option><option value="3">3 秒</option>
+      </select>
+    </div>
+    <div class="setting">
+      <label>活動選項</label>
+      <div class="activityChecks">
+        ${Object.entries(ACTIVITIES).map(([k,v])=>`<label><input type="checkbox" value="${k}" ${settings.enabled.includes(k)?"checked":""}> ${v.emoji} ${v.name}</label>`).join("")}
+      </div>
+    </div>
+    <div class="modalBtns">
+      <button id="cancel" class="smallBtn">取消</button>
+      <button id="saveSettings" class="smallBtn primary">儲存設定</button>
+    </div>
+  </div>`;
+  document.body.appendChild(panel);
+  panel.querySelector("#mode").value=settings.mode;
+  panel.querySelector("#choices").value=settings.choices;
+  panel.querySelector("#dwell").value=settings.dwellSeconds;
+  panel.querySelector("#cancel").onclick=()=>panel.remove();
+  panel.querySelector("#saveSettings").onclick=()=>{
+    const enabled=[...panel.querySelectorAll('input[type="checkbox"]:checked')].map(x=>x.value);
+    if(!enabled.length){alert("請至少選擇一項活動");return;}
+    settings.mode=panel.querySelector("#mode").value;
+    settings.choices=Number(panel.querySelector("#choices").value);
+    settings.dwellSeconds=Number(panel.querySelector("#dwell").value);
+    settings.enabled=enabled;
+    if(settings.choices>enabled.length) settings.choices=enabled.length;
+    save();panel.remove();state="idle";render();
+  };
+}
+
+document.addEventListener("keydown",e=>{
+  if(e.code==="Space"){
+    if(e.target.tagName==="BUTTON" || e.target.tagName==="SELECT" || e.target.tagName==="INPUT") return;
+    e.preventDefault();
+    if(state==="idle") trigger();
+  }
+  if(e.key==="Escape" && state!=="idle"){goHome();}
+});
+render();
+</script>
+</body>
+</html>
